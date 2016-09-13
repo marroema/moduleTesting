@@ -1,0 +1,134 @@
+div.timeclock_payroll_edits {
+  outline:none;
+}
+
+div.timeclock_payroll_edits strong {
+  line-height:30px;
+}
+
+div.timeclock_payroll_edits:hover {
+  text-decoration:none;
+}
+
+div.timeclock_payroll_edits span {
+  z-index:10;
+  display:none;
+  font-weight: 400;
+  padding:14px 20px;
+  margin-top:-30px;
+  margin-left:28px;
+  width:400px;
+  line-height:16px;
+}
+
+div.timeclock_payroll_edits:hover span {
+  display:inline;
+  position:absolute;
+  color:#111;
+  border:1px solid #DCA;
+  background:#fffAF0;
+}
+
+div.timeclock_payroll_edits {
+  font-weight: 700;
+}
+
+span.timeclock_payroll_edit {
+  display:inline;
+}
+
+.callout {
+  z-index:20;
+  position:absolute;
+  top:30px;
+  border:0;
+  left:-12px;
+}
+
+.timeclock_payroll_inline_form label {
+display: inline-block;
+clear: none;
+float: left;
+margin: 1px;
+padding: 1px;
+}
+.timeclock_payroll_inline_form .form-item {
+display: inline-block;
+clear: none;
+margin: 0px;
+padding: 0px;
+}
+.timeclock_payroll_inline_form .form-text {
+display: inline-block;
+clear: none;
+float: left;
+margin: 0px;
+padding: 0px;
+}
+
+timeclock_payroll_inline_form div, timeclock_payroll_inline_form label{
+display: inline-block;
+clear: none;
+margin: 1px;
+padding: 1px;
+}
+
+.date-padding {
+display: inline-block;
+clear: none;
+margin: 0px;
+padding: 0px !important;
+}
+
+.container-inline-date {
+display: inline-block;
+clear: none;
+margin: 0px;
+padding: 0px;
+width: 33%;
+vertical-align: middle;
+}
+.container-inline-approve {
+display: inline-block;
+clear: right;
+margin: 0px;
+padding: 2px;
+width: 33%;
+vertical-align: middle;
+}
+.container-inline-approve .checkbox{
+clear: both;
+display: block;
+margin: 5px;
+margin-left: 20px;
+}
+
+@media only screen and (max-width: 300px) {
+.container-inline-date {
+display:block;
+clear: both;
+margin: 0px;
+padding: 0px;
+width: 33%;
+vertical-align: middle;
+}
+.container-inline-approve {
+display: block;
+clear: both;
+margin: 0px;
+padding: 2px;
+width: 33%;
+vertical-align: middle;
+}
+}
+.select_all_checkbox{
+display: inline-block;
+margin: 12px;
+}
+.save_button {
+display: inline-block;
+}
+input {
+padding: 3px;
+}
+

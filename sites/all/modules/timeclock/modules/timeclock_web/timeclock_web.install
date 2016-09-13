@@ -1,0 +1,14 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions for timeclock_web.
+ */
+
+/**
+ * Implements hook_install().
+ *
+ * Set default values for variables used elsewhere.
+ */
+function timeclock_web_install() {
+  // Don't do a thing yet.
+}

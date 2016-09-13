@@ -1,0 +1,181 @@
+<?php
+
+/**
+* @file
+* A bloc module that displays recent blog and forums posts
+*/
+
+function current_posts_help($path, $arg) {
+    switch ($path) {
+        case "admin/help#current_posts":
+            return '' . t("Displays links to nodes created on this date") . '';
+            break;
+    }
+}//end help functino
+
+
+/**
+ * Implements hook_block_info()..
+ *
+ */
+
+function current_posts_block_info(){
+
+  $blocks['current_posts'] = array(
+  //The name that will appear in the block list.
+  'info' => t('Current posts'),
+  //Default setings...
+  'cache' => DRUPAL_CACHE_PER_ROLE,
+  );
+  return $blocks;
+}//end block info function
+
+function current_posts_contents($display){
+  //Get today's date
+  $today = getdate();
+  //Calculate the date a week ago
+  $start_time = mktime(0, 0, 0,$today['mon'],($today['mday'] - 7), $today['year']);
+  //Get all posts from one week ago to present
+  $end_time = time();
+
+  $max_num = variable_get('current_posts_max', 3);
+
+  //use database api to retrieve current posts
+  $query = db_select('node', 'n')
+  ->fields('n', array('nid', 'title', 'created'))
+  ->condition('status', 1)
+  ->condition('created', array($start_time, $end_time), 'BETWEEN')
+  ->orderBy('created', 'DESC');
+
+  if ($display == 'block') {
+    $query->range(0, $max_num);
+  }
+  return $query->execute();
+}//end content function
+
+function current_posts_block_view($delta = '') {
+  switch ($delta) {
+    case 'current_posts':
+      $block['subject'] = t('Currently posts');
+      if (user_access('access content')) {
+        $result = current_posts_contents('block');
+
+        $items = array();
+
+        foreach ($result as $node) {
+          $items[] = array(
+            'data' => l($node->title, 'node/' . $node->nid),
+          );
+        }
+
+        if (empty($items)) {
+          $block['content'] = t('No posts available');
+        } else {
+          $block['content']['posts'] = array(
+            '#theme' => 'item_list__current_post__block',
+            '#items' => $items,
+            );
+          $block['content']['more'] = array(
+            '#theme' => 'more_link__current_posts',
+            '#url' => 'current_posts',
+            '#title' => t('See the full list of current posts'),
+          );
+        }
+      }
+  }
+  return $block;
+}
+
+
+/*
+  Implements hook_menu
+ */
+
+function current_posts_menu(){
+  $items = array();
+
+  $items['current_posts'] = array(
+    'title' => 'Current posts',
+    'page callback' => '_current_posts_page',
+    'access arguments' => array('access current_posts content'),
+    'type' => MENU_CALLBACK,
+    );
+  return $items;
+}
+
+
+
+function current_posts_form($form, &$form_state){
+  $form['current_posts_max'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximun number of post'),
+    '#default_value' => variable_get('current_posts_max', 3),
+    '#size' => 2,
+    '#maxlength' => 2,
+    '#description' => t('The maximum number of links to display in the block'),
+    '#required' => TRUE,
+    );
+
+  return system_settings_form($form);
+}
+
+/*Implements validation from the form api
+@param $form
+Structured array containing the elements and properties of the form
+@param $form_state
+An array that stores information about the form's current state during processing
+ */
+
+function current_posts_form_validate($form, &$form_state){
+  $max_num = $form_state['values']['current_posts_max'];
+  if (!is_numeric($max_num)) {
+    form_set_error('current_post_max', t('You must enter a number for the maximum number of posts to display'));
+  } elseif ($max_num <= 0) {
+    form_set_error('current_post_max', t('Number must be positive'));
+  }
+}
+
+
+
+/*
+implements hook_permission
+ */
+
+function current_posts_permission(){
+  return array(
+    'access current_posts content' => array(
+      'title' => t('access content for the current posts module')
+      )
+    );
+}
+
+
+function _current_posts_page() {
+  $result = current_posts_contents('page');
+
+  $items = array();
+
+  foreach ($result as $node) {
+    $items[] = array(
+      'data' => l($node->title, 'node/' . $node->nid),
+    );
+  }
+
+  if (empty($items)) {
+    $page_array['current_posts_arguments'] = array(
+      '#title' => t('All posts from las week'),
+      '#markup' => t('No post available'),
+    );
+    return $page_array;
+  }
+
+  else {
+    $page_array['current_posts_arguments'] = array(
+      '#title' => t('All posts from the last week'),
+      '#items' => $items,
+      '#theme' => 'item_list__current_post',
+    );
+    return $page_array;
+  }
+
+}

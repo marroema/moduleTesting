@@ -1,0 +1,62 @@
+<?php
+/**
+ * @file
+ * Install, update, and uninstall functions for timeclock_telephone
+ *
+
+/**
+ * Implements hook_install().
+ *
+ * Set default values for variables used elsewhere.
+ */
+function timeclock_telephone_install() {
+  // Don't do a thing yet.
+}
+
+/**
+ * Implements hook_schema().
+ */
+function timeclock_telephone_schema() {
+  $schema['timeclock_telephone_scripts'] = array(
+    'description' => 'Telephone Scripts table for Entity',
+    'fields' => array(
+      'sid' => array(
+        'description' => 'Primary Key sid',
+        'type' => 'serial',
+        'not null' => TRUE,
+      ),
+      'title' => array(
+        'description' => 'Script Title',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'number' => array(
+        'description' => 'Script Phone Number',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'script' => array(
+        'description' => 'A serialized version of the call script array.',
+        'type' => 'blob',
+        'size' => 'big',
+      ),
+      'created' => array(
+        'description' => 'Created timestamp',
+        'type' => 'int',
+        'not null' => FALSE,
+      ),
+      'changed' => array(
+        'description' => 'Changed timestamp',
+        'type' => 'int',
+        'not null' => FALSE,
+      ),
+    ),
+    'primary key' => array('sid'),
+  );
+  return $schema;
+}
+

@@ -1,0 +1,476 @@
+<?php
+/**
+ * @file
+ * Module file for timeclock_telephone.
+ */
+
+// Admin uri links.
+define('ADMIN_CONTENT_TELEPHONE_MANAGE_URI', 'admin/content/telephone/manage/');
+define('ADMIN_CONTENT_TELEPHONE_URI', 'admin/content/telephone');
+
+/**
+ * Implements hook_entity_info().
+ */
+function timeclock_telephone_entity_info() {
+  $timeclock_telephone_entity_info['timeclock_telephone'] = array(
+    'label' => t('Timeclock Telephone Script'),
+    'label callback' => 'timeclock_telephone_label_callback',
+    'entity class' => 'Telephone',
+    'controller class' => 'TimeclockTelephoneController',
+    'base table' => 'timeclock_telephone_scripts',
+    'uri callback' => 'timeclock_telephone_uri',
+    'fieldable' => TRUE,
+    'entity keys' => array(
+      'id' => 'sid',
+      'label' => 'title',
+    ),
+    'load hook' => 'timeclock_telephone_load',
+    'static cache' => TRUE,
+    'admin ui' => array(
+      'path' => 'admin/content/telephone',
+      'controller class' => 'TimeclockTelephoneUIController',
+      'file' => 'includes/timeclock_telephone.admin.inc',
+    ),
+    'module' => 'timeclock_telephone',
+    'access callback' => 'timeclock_telephone_access_callback',
+    'bundles' => array(
+      'timeclock_telephone' => array(
+        'label' => 'Timeclock Telephone Script',
+        'admin' => array(
+          'path' => 'admin/structure/telephone/manage',
+          'access arguments' => array('administer telephone script entities'),
+        ),
+      ),
+    ),
+    'views controller class' => 'EntityDefaultViewsController',
+  );
+
+  return $timeclock_telephone_entity_info;
+}
+
+
+/**
+ * Implements hook_permission().
+ */
+function timeclock_telephone_permission() {
+  return array(
+    // Permission to allow a role to record a punch.
+    'timeclock telephone punch' => array(
+      'title' => t('Submit Timeclock Telephone Punches'),
+      'description' => t('Allow users to record a punch in or out via the telephone call.'),
+    ),
+    'administer timeclock telephone' => array(
+      'title' => t('Administer Timeclock Telephone'),
+      'description' => t('Allow users to change settings for the timeclock telephone module.'),
+    ),
+    'administer telephone script entities' => array(
+      'title' => t('Administer telephone script Entities'),
+      'description' => t('Allows a user to administer telephone script entities'),
+    ),
+    'view telephone script entities' => array(
+      'title' => t('View telephone script Entity'),
+      'description' => t('Allows a user to view the telephone script entities.'),
+    ),
+    'create telephone script entities' => array(
+      'title' => t('Create telephone script Entities'),
+      'description' => t('Allows a user to create telephone script entities.'),
+    ),
+    'edit telephone script entities' => array(
+      'title' => t('Edit telephone script Entities'),
+      'description' => t('Allows a user to edit telephone script entities.'),
+    ),
+    'delete telephone script entities' => array(
+      'title' => t('Delete telephone script Entities'),
+      'description' => t('Allows a user to delete telephone script entities.'),
+    ),
+    'use telephone script bulk operations' => array(
+      'title' => t('Do bulk operations on telephone script entities'),
+      'description' => t('Allows a user to do bulk operations.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Page callbacks and arguments for submission form, view page, and
+ * admin form.
+ */
+function timeclock_telephone_menu() {
+  $items['admin/config/system/timeclock/telephone'] = array(
+    'title' => 'TimeClock Telephone',
+    'description' => 'TimeClock telephone settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_telephone_admin'),
+    'access arguments' => array('administer timeclock telephone'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'timeclock_telephone.admin.inc',
+  );
+  $items['twilio_incoming.php'] = array(
+    'page callback' => 'timeclock_telephone_handle_incoming',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    'file' => 'timeclock_telephone.twilio.inc',
+  );
+  $items['twilio_gather.php'] = array(
+    'page callback' => 'timeclock_telephone_handle_gather',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    'file' => 'timeclock_telephone.twilio.inc',
+  );
+  $items['telephone/%'] = array(
+    'title' => 'Telephone Script',
+    'page callback' => 'timeclock_telephone_view_entity',
+    'page arguments' => array(1),
+    'access callback' => 'timeclock_telephone_access_menu_callback',
+    'access arguments' => array('view', 1),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/content/telephone/bulk/delete/%'] = array(
+    'title' => 'Bulk Delete Telephone Scripts',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_telephone_bulk_delete', 5),
+    'access arguments' => array('administer telephone script entities'),
+    'file' => 'includes/timeclock_telephone.admin.inc',
+  );
+
+  $items['admin/structure/telephone'] = array(
+    'title' => 'Telephone Script Fields',
+    'access arguments' => array('administer telephone script entities'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  
+  return $items;
+}
+
+/**
+ * Check access permission for timeclock_telephone Entity UI.
+ */
+function timeclock_telephone_access_menu_callback($op, $timeclock_telephone = NULL, $account = NULL) {
+  switch ($op) {
+    case 'view':
+      return user_access('view telephone script entities', $account);
+
+    case 'create':
+      return user_access('create telephone script entities', $account);
+
+    case 'update':
+      return user_access('edit telephone script entities', $account);
+
+    case 'delete':
+      return user_access('delete telephone script entities', $account);
+  }
+
+  return FALSE;
+}
+
+/**
+ * telephone script access callback.
+ */
+function timeclock_telephone_access_callback() {
+  if (user_is_anonymous() && !user_access('administer telephone script entities')) {
+    return FALSE;
+  }
+  else {
+    return TRUE;
+  }
+}
+
+/**
+ * Implementing the uri callback defined
+ */
+function timeclock_telephone_uri($telephone) {
+  return array(
+    'path' => 'telephone/' . $telepone->sid,
+  );
+}
+
+/**
+ * Helper function for custom queries.
+ */
+function timeclock_telephone_entity_query($conditions = array()) {
+
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'timeclock_telephone');
+
+  // Apply conditions.
+  foreach ($conditions as $key => $value) {
+    $query->propertyCondition($key, $value);
+  }
+
+  $result = $query->execute();
+
+  if (isset($result['timeclock_telephone'])) {
+    $timeclock_telephone = array_keys($result['timeclock_telephone']);
+  }
+  else {
+    $timeclock_telephone = array();
+  }
+
+  return $timeclock_telephone;
+}
+
+/**
+ * Label callback for timeclock_telephone entities, for menu router, etc.
+ */
+function timeclock_telephone_label_callback($timeclock_telephone, $type) {
+  $label = isset($timeclock_telephone->title) ? $timeclock_telephone->title : NULL;
+  return $label;
+}
+
+/**
+ * Saves telephone script to database.
+ */
+function timeclock_telephone_save(timeclock_telephone $timeclock_telephone) {
+  return $timeclock_telephone->save();
+}
+
+/**
+ * View for /telephone/<sid> page.
+ */
+function timeclock_telephone_view_entity($sid) {
+  $script = timeclock_telephone_load($sid);
+  $view_mode = 'Full';
+  $script->content = array();
+  field_attach_prepare_view('timeclock_telephone', array($script->sid => $script), $view_mode);
+  entity_prepare_view('timeclock_telephone', array($script->sid => $script));
+  $script->content += field_attach_view('timeclock_telephone', $script, $view_mode);
+  $verbs = array();
+  $verbs = unserialize($script->script);
+  dpm($verbs);
+  $call_script = $script->sid;
+  $output = '';
+  module_load_include('inc', 'timeclock_telephone', 'timeclock_telephone.twilio');
+    $output .=  '<Response>' . "\n";
+    foreach ($verbs as $order => $verb) {
+      $output .=  timeclock_telephone_assemble_twiml_verbs($verb, $order, $call_script);
+      $output .=  "\n";
+    }
+    $output .=  '</Response>';
+  drupal_set_title($script->title);
+  $page_array = array(
+    'phone_number' => array(
+      '#type' => 'markup',
+      '#markup' => '<h2>' . $script->number . '</h2>',
+    ),
+    'script' => array(
+      '#type' => 'markup',
+      '#markup' => '<textarea rows="12" cols="60" readonly>' . $output . '</textarea>',
+      '#prefix' => '<h3>' . t('Call Script') . ':</h3>',
+    ),
+  );
+  $page_array += $script->content;
+  $page_array += array(
+    'date' => array(
+      '#type' => 'markup',
+      '#markup' => (is_null($script->changed)) ? t('Created') . ': ' . format_date($script->created, 'medium') : t('Updated') . ': ' . format_date($script->changed, 'medium'),
+      '#prefix' => '<br/>',
+    ),
+  );
+  return $page_array;
+}
+
+/**
+ * timeclock_telephone custom entity class.
+ */
+class Telephone extends Entity {
+  /**
+   * Override defaultUri().
+   */
+  protected function defaultUri() {
+    return array('path' => 'telephone/' . $this->identifier());
+  }
+}
+
+/**
+ * Menu autoloader for /telephone.
+ */
+function timeclock_telephone_load($sid, $reset = FALSE) {
+  $timeclock_telephone = timeclock_telephone_load_multiple(array($sid), array(), $reset);
+  return reset($timeclock_telephone);
+}
+
+/**
+ * Load multiple timeclock_telephone based on certain conditions.
+ */
+function timeclock_telephone_load_multiple($sids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load('timeclock_telephone', $sids, $conditions, $reset);
+}
+
+/**
+ * Deletes a timeclock_telephone.
+ */
+function timeclock_telephone_delete(timeclock_telephone $timeclock_telephone) {
+  $timeclock_telephone->delete();
+}
+
+/**
+ * Delete multiple timeclock_telephone.
+ */
+function timeclock_telephone_delete_multiple(array $sids) {
+  entity_get_controller('timeclock_telephone')->delete($sids);
+}
+
+/**
+ * Custom controller for the timeclock_telephone entity.
+ */
+class TimeclockTelephoneController extends EntityAPIController {
+
+  /**
+   * Override the save method.
+   */
+  public function save($entity, DatabaseTransaction $transaction = NULL) {
+    if (isset($entity->is_new)) {
+      $entity->created = REQUEST_TIME;
+    }
+
+    $entity->changed = REQUEST_TIME;
+    return parent::save($entity, $transaction);
+  }
+}
+
+/**
+ * Custom controller for the administrator UI.
+ */
+class TimeclockTelephoneUIController extends EntityDefaultUIController {
+
+  /**
+   * Override the menu hook for default ui controller.
+   */
+  public function hook_menu() {
+    $items = parent::hook_menu();
+    $items[$this->path]['title'] = t('Telephone Scripts');
+    $items[$this->path]['description'] = t('Manage telephone scripts, including fields.');
+    $items[$this->path]['access callback'] = 'timeclock_telephone_access_callback';
+    $items[$this->path]['access arguments'] = array('administer telephone script entities');
+    $items[$this->path]['type'] = MENU_LOCAL_TASK;
+    return $items;
+  }
+
+  /**
+   * Admin form for searching and doing bulk operations.
+   */
+  public function overviewForm($form, &$form_state) {
+    $form['pager'] = array('#theme' => 'pager');
+
+    $header = array(
+      'sid' => array('data' => t('Telephone Script ID'), 'field' => 'sid'),
+      'number' => array('data' => t('Number'), 'field' => 'number'),
+      'title' => array('data' => t('Title'), 'field' => 'title'),
+      'operations' => array('data' => t('Operations'), 'field' => 'operations'),
+    );
+
+    $options = array();
+    $search_term = !empty($_GET['search']) ? $_GET['search'] : NULL;
+
+    $query = new EntityFieldQuery();
+    $query
+      ->entityCondition('entity_type', 'timeclock_telephone');
+
+    if (!empty($search_term)) {
+      $query->propertyCondition('title', '%' . $search_term . '%', 'like');
+    }
+    // Check for sort order and sort key.
+    if (!empty($_GET['sort']) && !empty($_GET['order'])) {
+      $sort = strtoupper($_GET['sort']);
+      $order = strtolower($_GET['order']);
+      $order = str_replace(' ', '_', $order);
+      if ($order != 'operations') {
+        $query->propertyOrderBy($order, $sort);
+      }
+    }
+
+    $query->pager(TOTAL_ITEMS_PER_PAGE);
+
+    $result = $query->execute();
+    $timeclock_telephone_results = !empty($result['timeclock_telephone']) ? $result['timeclock_telephone'] : array();
+    $timeclock_telephone_array = !empty($timeclock_telephone_results) ? timeclock_telephone_load_multiple(array_keys($timeclock_telephone_results)) : array();
+    foreach ($timeclock_telephone_array as $id => $timeclock_telephone) {
+      $options['sid-' . $id] = array(
+        'sid' => l($timeclock_telephone->sid, 'telephone/' . $timeclock_telephone->sid),
+        'number' => l($timeclock_telephone->number, 'telephone/' . $timeclock_telephone->sid),
+        'title' => l($timeclock_telephone->title, 'telephone/' . $timeclock_telephone->sid),
+        'operations' =>
+        l(t('View'), 'telephone/' . $timeclock_telephone->sid) . ' ' .
+        l(t('Edit'), ADMIN_CONTENT_TELEPHONE_MANAGE_URI . $id, array('query' => array('destination' => ADMIN_CONTENT_TELEPHONE_URI))) . ' ' .
+        l(t('Delete'), ADMIN_CONTENT_TELEPHONE_MANAGE_URI . $id . '/delete', array('attributes' => array('class' => array('timeclock_telephone-delete-' . $timeclock_telephone->sid), ), 'query' => array('destination' => ADMIN_CONTENT_TELEPHONE_URI))),
+      );
+    }
+
+    $form['search'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Basic Search'),
+      '#collapsible' => TRUE,
+      '#collapsed' => !empty($search_term) ? FALSE : TRUE,
+    );
+
+    $form['search']['search_text'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Search Term'),
+      '#default_value' => !empty($search_term) ? $search_term : '',
+    );
+
+    $form['search']['search_submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Search'),
+    );
+
+    $form['bulk_operations'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Bulk Operations'),
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+    );
+
+    $form['bulk_operations']['operations'] = array(
+      '#type' => 'select',
+      '#options' => array(
+        0 => t('Select a bulk operation'),
+        'delete' => t('Delete selected telephone'),
+      ),
+    );
+
+    $form['bulk_operations']['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Submit'),
+    );
+
+    $form['entities'] = array(
+      '#type' => 'tableselect',
+      '#header' => $header,
+      '#options' => $options,
+      '#attributes' => array('class' => array('entity-sort-table')),
+      '#empty' => t('There are no telephone scripts.'),
+    );
+
+    return $form;
+  }
+
+  /**
+   * Form Submit method.
+   */
+  public function overviewFormSubmit($form, &$form_state) {
+    $values = $form_state['input'];
+    $sids = array();
+
+    if (!empty($values['entities'])) {
+      foreach ($values['entities'] as $index => $value) {
+        if (!empty($value)) {
+          $sids[] = str_replace('sid-', '', $value);
+        }
+      }
+
+      switch ($values['operations']) {
+        case 'delete':
+          drupal_goto('admin/content/telephone/bulk/delete/' . implode('|', $sids));
+          break;
+      }
+    }
+
+    if (!empty($values['search_text'])) {
+      drupal_goto('admin/content/telephone', array('query' => array('search' => $values['search_text'])));
+    }
+  }
+
+}

@@ -1,0 +1,13 @@
+name = TimeClock Jobs
+description = Sub-Module of TimeClock API. Provides job code Functionality for punch clocks.
+package = TimeClock
+core = 7.x
+dependencies[] = timeclock
+dependencies[] = entity
+
+; Information added by Drupal.org packaging script on 2015-08-26
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "timeclock"
+datestamp = "1440599340"
+

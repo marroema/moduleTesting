@@ -1,0 +1,109 @@
+<?php
+/**
+ * @file
+ * Module file for timeclock_web.
+ */
+
+/**
+ * Implements hook_help().
+ */
+function timeclock_web_help($path, $arg) {
+  switch ($path) {
+    // Help for the custom admin page.
+    case 'admin/config/timeclock/web':
+      return '<p>' . t('No text here yet.') . '</p>';
+
+  }
+}
+
+/**
+ * Implements hook_permission().
+ */
+function timeclock_web_permission() {
+  return array(
+    // Permission to allow a role to record a punch.
+    'timeclock web punch' => array(
+      'title' => t('Submit Timeclock Web Punches'),
+      'description' => t('Allow users to record a punch in or out via the web interface.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Page callbacks and arguments for submission form, view page, and
+ * admin form.
+ */
+function timeclock_web_menu() {
+  $items['admin/config/system/timeclock/web'] = array(
+    'title' => 'Web TimeClock',
+    'description' => 'TimeClock Web intreface settings page',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_web_admin'),
+    'access arguments' => array('admin timeclock'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'timeclock_web.admin.inc',
+  );
+  $items['timeclock/web'] = array(
+    'title' => 'Clock In',
+    'description' => 'Allow employees to clock in or out.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_web_punch_form'),
+    'access arguments' => array('timeclock web punch'),
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'timeclock_web.form.inc',
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function timeclock_web_block_info() {
+  $blocks['timeclock_web_punch_form'] = array(
+    'info' => t('Timeclock Webinterface Punch form.'),
+    'cache' => DRUPAL_CACHE_PER_ROLE,
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_configure().
+ */
+function timeclock_web_block_configure($delta = '') {
+  $form = array();
+  if ($delta == 'timeclock_web_punch_form') {
+    $form['timeclock_web_punch_form_fields'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Special Instructions'),
+      '#size' => 60,
+      '#description' => t('This text will appear with the clock in button.'),
+      '#default_value' => variable_get('timeclock_web_block_instructions', t('Use the button below to clock in and out.')),
+    );
+  }
+  return $form;
+}
+
+/**
+ * Implements hook_block_save().
+ */
+function timeclock_web_block_save($delta = '', $edit = array()) {
+  if ($delta == 'timeclock_web_punch_form') {
+    variable_set('timeclock_web_block_instructions', $edit['timeclock_web_punch_form_fields']);
+  }
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function timeclock_web_block_view($delta = '') {
+  switch ($delta) {
+    case 'timeclock_web_punch_form':
+      $block['subject'] = t('Timeclock');
+      module_load_include('inc', 'timeclock_web', 'timeclock_web.form');
+      $block['content'] = drupal_get_form('timeclock_web_punch_form');
+      break;
+  }
+  return $block;
+}

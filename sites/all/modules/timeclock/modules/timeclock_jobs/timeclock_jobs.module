@@ -1,0 +1,420 @@
+<?php
+/**
+ * @file
+ * Module file for timeclock_jobs.
+ */
+
+/**
+ * @TODO Merge timeclock_jobs into timeclock module as we don't want to have it be optional. Can be disabled later in options
+ * ie "don't prompt for job ID if only one job ID exists" setting.
+ */
+
+// Admin uri links.
+define('ADMIN_CONTENT_JOBS_MANAGE_URI', 'admin/content/jobs/manage/');
+define('ADMIN_CONTENT_JOBS_URI', 'admin/content/jobs');
+
+/**
+ * Implements hook_entity_info().
+ */
+function timeclock_jobs_entity_info() {
+  $timeclock_jobs_entity_info['timeclock_jobs'] = array(
+    'label' => t('Timeclock jobs'),
+    'label callback' => 'timeclock_jobs_label_callback',
+    'entity class' => 'jobs',
+    'controller class' => 'TimeclockJobsController',
+    'base table' => 'timeclock_jobs',
+    'uri callback' => 'timeclock_jobs_uri',
+    'fieldable' => TRUE,
+    'entity keys' => array(
+      'id' => 'job_id',
+      'label' => 'name',
+    ),
+    'load hook' => 'timeclock_jobs_load',
+    'static cache' => TRUE,
+    'admin ui' => array(
+      'path' => 'admin/content/jobs',
+      'controller class' => 'TimeclockJobsUIController',
+      'file' => 'includes/timeclock_jobs.admin.inc',
+    ),
+    'module' => 'timeclock_jobs',
+    'access callback' => 'timeclock_jobs_access_callback',
+    'bundles' => array(
+      'timeclock_jobs' => array(
+        'label' => 'Timeclock jobs',
+        'admin' => array(
+          'path' => 'admin/structure/jobs/manage',
+          'access arguments' => array('administer jobs entities'),
+        ),
+      ),
+    ),
+    'views controller class' => 'EntityDefaultViewsController',
+  );
+
+  return $timeclock_jobs_entity_info;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function timeclock_jobs_permission() {
+   return array(
+    'administer jobs entities' => array(
+      'title' => t('Administer Jobs Entities'),
+      'description' => t('Allows a user to administer jobs entities'),
+    ),
+    'view jobs entities' => array(
+      'title' => t('View Jobs Entity'),
+      'description' => t('Allows a user to view the jobs entities.'),
+    ),
+    'create jobs entities' => array(
+      'title' => t('Create Jobs Entities'),
+      'description' => t('Allows a user to create jobs entities.'),
+    ),
+    'edit jobs entities' => array(
+      'title' => t('Edit Jobs Entities'),
+      'description' => t('Allows a user to edit jobs entities.'),
+    ),
+    'delete jobs entities' => array(
+      'title' => t('Delete Jobs Entities'),
+      'description' => t('Allows a user to delete jobs entities.'),
+    ),
+    'use jobs bulk operations' => array(
+      'title' => t('Do bulk operations on Jobs entities'),
+      'description' => t('Allows a user to do bulk operations.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Page callbacks and arguments for submission form, view page, and
+ * admin form.
+ */
+function timeclock_jobs_menu() {
+  $items = array();
+
+  $items['jobs/%'] = array(
+    'title' => 'jobs',
+    'page callback' => 'timeclock_jobs_view_entity',
+    'page arguments' => array(1),
+    'access callback' => 'timeclock_jobs_access_menu_callback',
+    'access arguments' => array('view', 1),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/content/jobs/bulk/delete/%'] = array(
+    'title' => 'Bulk Delete jobs',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_jobs_bulk_delete', 5),
+    'access arguments' => array('administer jobs entities'),
+    'file' => 'includes/timeclock_jobs.admin.inc',
+  );
+
+  $items['admin/structure/jobs'] = array(
+    'title' => 'Jobs Fields',
+    'access arguments' => array('administer jobs entities'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Check access permission for timeclock_jobs Entity UI.
+ */
+function timeclock_jobs_access_menu_callback($op, $timeclock_jobs = NULL, $account = NULL) {
+  switch ($op) {
+    case 'view':
+      return user_access('view jobs entities', $account);
+
+    case 'create':
+      return user_access('create jobs entities', $account);
+
+    case 'update':
+      return user_access('edit jobs entities', $account);
+
+    case 'delete':
+      return user_access('delete jobs entities', $account);
+  }
+
+  return FALSE;
+}
+
+/**
+ * Jobs access callback.
+ */
+function timeclock_jobs_access_callback() {
+  if (user_is_anonymous() && !user_access('administer jobs entities')) {
+    return FALSE;
+  }
+  else {
+    return TRUE;
+  }
+}
+
+/**
+ * Implementing the uri callback defined
+ */
+function timeclock_jobs_uri($job) {
+  return array(
+    'path' => 'jobs/' . $job->job_id,
+  );
+}
+
+/**
+ * Helper function for custom queries.
+ */
+function timeclock_jobs_entity_query($conditions = array()) {
+
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'timeclock_jobs');
+
+  // Apply conditions.
+  foreach ($conditions as $key => $value) {
+    $query->propertyCondition($key, $value);
+  }
+
+  $result = $query->execute();
+
+  if (isset($result['timeclock_jobs'])) {
+    $timeclock_jobs = array_keys($result['timeclock_jobs']);
+  }
+  else {
+    $timeclock_jobs = array();
+  }
+
+  return $timeclock_jobs;
+}
+
+/**
+ * Label callback for timeclock_jobs entities, for menu router, etc.
+ */
+function timeclock_jobs_label_callback($timeclock_jobs, $type) {
+  $label = isset($timeclock_jobs->name) ? $timeclock_jobs->name : NULL;
+  return $label;
+}
+
+/**
+ * Saves job to database.
+ */
+function timeclock_jobs_save(timeclock_jobs $timeclock_jobs) {
+  return $timeclock_jobs->save();
+}
+
+/**
+ * View for /jobs/<job_id> page.
+ */
+function timeclock_jobs_view_entity($job_id) {
+  $job = timeclock_jobs_load($job_id);
+  $view_mode = 'Full';
+  $job->content = array();
+  field_attach_prepare_view('timeclock_jobs', array($job->job_id => $job), $view_mode);
+  entity_prepare_view('timeclock_jobs', array($job->job_id => $job));
+  $job->content += field_attach_view('timeclock_jobs', $job, $view_mode);
+  drupal_set_title($job->name);
+  return $job->content;
+}
+
+/**
+ * timeclock_jobs custom entity class.
+ */
+class Jobs extends Entity {
+  /**
+   * Override defaultUri().
+   */
+  protected function defaultUri() {
+    return array('path' => 'jobs/' . $this->identifier());
+  }
+}
+
+/**
+ * Menu autoloader for /jobs.
+ */
+function timeclock_jobs_load($job_id, $reset = FALSE) {
+  $timeclock_jobs = timeclock_jobs_load_multiple(array($job_id), array(), $reset);
+  return reset($timeclock_jobs);
+}
+
+/**
+ * Load multiple timeclock_jobs based on certain conditions.
+ */
+function timeclock_jobs_load_multiple($job_ids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load('timeclock_jobs', $job_ids, $conditions, $reset);
+}
+
+/**
+ * Deletes a timeclock_jobs.
+ */
+function timeclock_jobs_delete(timeclock_jobs $timeclock_jobs) {
+  $timeclock_jobs->delete();
+}
+
+/**
+ * Delete multiple timeclock_jobs.
+ */
+function timeclock_jobs_delete_multiple(array $job_ids) {
+  entity_get_controller('timeclock_jobs')->delete($job_ids);
+}
+
+/**
+ * Custom controller for the timeclock_jobs entity.
+ */
+class TimeclockJobsController extends EntityAPIController {
+
+  /**
+   * Override the save method.
+   */
+  public function save($entity, DatabaseTransaction $transaction = NULL) {
+    if (isset($entity->is_new)) {
+      $entity->created = REQUEST_TIME;
+    }
+
+    $entity->changed = REQUEST_TIME;
+    return parent::save($entity, $transaction);
+  }
+}
+
+/**
+ * Custom controller for the administrator UI.
+ */
+class TimeclockJobsUIController extends EntityDefaultUIController {
+
+  /**
+   * Override the menu hook for default ui controller.
+   */
+  public function hook_menu() {
+    $items = parent::hook_menu();
+    $items[$this->path]['title'] = t('Jobs');
+    $items[$this->path]['description'] = t('Manage jobs, including fields.');
+    $items[$this->path]['access callback'] = 'timeclock_jobs_access_callback';
+    $items[$this->path]['access arguments'] = array('administer jobs entities');
+    $items[$this->path]['type'] = MENU_LOCAL_TASK;
+    return $items;
+  }
+
+  /**
+   * Admin form for searching and doing bulk operations.
+   */
+  public function overviewForm($form, &$form_state) {
+    $form['pager'] = array('#theme' => 'pager');
+
+    $header = array(
+      'job_id' => array('data' => t('Job ID'), 'field' => 'job_id'),
+      'name' => array('data' => t('Name'), 'field' => 'job'),
+      'operations' => array('data' => t('Operations'), 'field' => 'operations'),
+    );
+
+    $options = array();
+    $search_term = !empty($_GET['search']) ? $_GET['search'] : NULL;
+
+    $query = new EntityFieldQuery();
+    $query
+      ->entityCondition('entity_type', 'timeclock_jobs');
+
+    if (!empty($search_term)) {
+      $query->propertyCondition('name', '%' . $search_term . '%', 'like');
+    }
+    // Check for sort order and sort key.
+    if (!empty($_GET['sort']) && !empty($_GET['order'])) {
+      $sort = strtoupper($_GET['sort']);
+      $order = strtolower($_GET['order']);
+      $order = str_replace(' ', '_', $order);
+      if ($order != 'operations') {
+        $query->propertyOrderBy($order, $sort);
+      }
+    }
+
+    $query->pager(TOTAL_ITEMS_PER_PAGE);
+
+    $result = $query->execute();
+    $timeclock_jobs_results = !empty($result['timeclock_jobs']) ? $result['timeclock_jobs'] : array();
+    $timeclock_jobs_array = !empty($timeclock_jobs_results) ? timeclock_jobs_load_multiple(array_keys($timeclock_jobs_results)) : array();
+    foreach ($timeclock_jobs_array as $id => $timeclock_jobs) {
+      $options['job_id-' . $id] = array(
+        'job_id' => l($timeclock_jobs->job_id, 'jobs/' . $timeclock_jobs->job_id),
+        'name' => l($timeclock_jobs->name, 'jobs/' . $timeclock_jobs->job_id),
+        'operations' =>
+        l(t('View'), 'jobs/' . $timeclock_jobs->job_id) . ' ' .
+        l(t('Edit'), ADMIN_CONTENT_JOBS_MANAGE_URI . $id, array('query' => array('destination' => ADMIN_CONTENT_JOBS_URI))) . ' ' .
+        l(t('Delete'), ADMIN_CONTENT_JOBS_MANAGE_URI . $id . '/delete', array('attributes' => array('class' => array('timeclock_jobs-delete-' . $timeclock_jobs->job_id), ), 'query' => array('destination' => ADMIN_CONTENT_JOBS_URI))),
+      );
+    }
+
+    $form['search'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Basic Search'),
+      '#collapsible' => TRUE,
+      '#collapsed' => !empty($search_term) ? FALSE : TRUE,
+    );
+
+    $form['search']['search_text'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Search Term'),
+      '#default_value' => !empty($search_term) ? $search_term : '',
+    );
+
+    $form['search']['search_submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Search'),
+    );
+
+    $form['bulk_operations'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Bulk Operations'),
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+    );
+
+    $form['bulk_operations']['operations'] = array(
+      '#type' => 'select',
+      '#options' => array(
+        0 => t('Select a bulk operation'),
+        'delete' => t('Delete selected jobs'),
+      ),
+    );
+
+    $form['bulk_operations']['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Submit'),
+    );
+
+    $form['entities'] = array(
+      '#type' => 'tableselect',
+      '#header' => $header,
+      '#options' => $options,
+      '#attributes' => array('class' => array('entity-sort-table')),
+      '#empty' => t('There are no jobs.'),
+    );
+
+    return $form;
+  }
+
+  /**
+   * Form Submit method.
+   */
+  public function overviewFormSubmit($form, &$form_state) {
+    $values = $form_state['input'];
+    $job_ids = array();
+
+    if (!empty($values['entities'])) {
+      foreach ($values['entities'] as $index => $value) {
+        if (!empty($value)) {
+          $job_ids[] = str_replace('job_id-', '', $value);
+        }
+      }
+
+      switch ($values['operations']) {
+        case 'delete':
+          drupal_goto('admin/content/jobs/bulk/delete/' . implode('|', $job_ids));
+          break;
+      }
+    }
+
+    if (!empty($values['search_text'])) {
+      drupal_goto('admin/content/jobs', array('query' => array('search' => $values['search_text'])));
+    }
+  }
+
+}
+

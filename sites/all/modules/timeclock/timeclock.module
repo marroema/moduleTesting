@@ -1,0 +1,791 @@
+<?php
+/**
+ * @file
+ * Module file for timeclock.
+ */
+ 
+// 50 items per page.
+define('TOTAL_ITEMS_PER_PAGE', 50);
+
+/**
+ * @TODO Make a new custom entity type for punches, each punch will have unique entity ID and fieldable.
+ * @TODO Move to a punch having an in and out time, ie shifts instead of punches. This will allow us to remove the concept of
+ * the status bit for employees. Employee is clocked in if there is an entity referencing their record with out an end time.
+ */
+
+/**
+ * Implements hook_help().
+ */
+function timeclock_help($path, $arg) {
+  switch ($path) {
+    // Some text for the Help page for the module.
+    case 'admin/help#timeclock':
+      $output = '';
+
+      return $output;
+
+    // Help for the custom admin page.
+    case 'admin/config/timeclock/general':
+      return '<p>' . t('No text here yet.') . '</p>';
+
+  }
+}
+
+/**
+ * Implements hook_permission().
+ */
+function timeclock_permission() {
+  return array(
+    // Permission to allow a role to record a punch.
+    'timeclock punch' => array(
+      'title' => t('Submit Timeclock Punches'),
+      'description' => t('Allow users to record a punch in or out.'),
+    ),
+    // Permission to allow a role to view punches, for managers.
+    'view timeclock punches' => array(
+      'title' => t('View timeclock punches'),
+      'description' => t('Allow users to view punches recorded'),
+    ),
+     // Permission to allow a role to change pins, for managers.
+    'change timeclock user pins' => array(
+      'title' => t('Change timeclock user pins'),
+      'description' => t('Allow a user to change the pin of another user.'),
+    ),
+    // Permission to allow a role to set time clock settings.
+    'admin timeclock' => array(
+      'title' => t('Administer TimeClock'),
+      'description' => t('Allow users to administer timeclock settings'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Page callbacks and arguments for submission form, view page, and
+ * admin form.
+ */
+function timeclock_menu() {
+  $items['admin/config/system/timeclock'] = array(
+    'title' => 'TimeClock',
+    'description' => 'TimeClock settings page',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_admin'),
+    'access arguments' => array('admin timeclock'),
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'timeclock.admin.inc',
+  );
+  $items['user/%user/timeclock'] = array(
+    'title' => 'TimeClock',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_user_form'),
+    'access arguments' => array('view timeclock punches'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['user/%user/pin'] = array(
+    'title' => 'TimeClock PIN',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('timeclock_user_pin'),
+    'access arguments' => array(1),
+    'access callback' => 'timeclock_change_pin_permission',
+    'type' => MENU_LOCAL_TASK,
+  );
+  return $items;
+}
+
+/**
+ * Defines hook_timeclock_punch_validate().
+ *
+ * This allows sub-modules to interrupt the punch process to validate the
+ * incoming data before the punch is accepted. If there are no validation
+ * failures in this process we submit the values to timeclock_record_punch
+ * any errors are also submitted to timeclock_record_punch with failure
+ * information.
+ */
+function timeclock_process_punch($array) {
+  dpm($array);
+  $uid = (array_key_exists('uid', $array)) ? $array['uid'] : NULL;
+  $eid = (array_key_exists('eid', $array)) ? $array['eid'] : NULL;
+  $pin = (array_key_exists('pin', $array)) ? $array['pin'] : NULL;
+  $originating_module = $array['module'];
+  // Lookup Employee ID number from UID.
+  if (!is_null($uid) && is_null($eid)) {
+    $select = db_select('timeclock_employees', 'e');
+    $select->fields('e', array('eid', 'uid', 'status', 'in_out'));
+    $select->condition('uid', (int) $uid);
+    $select->range(0, 1);
+    // Check to make sure we actually have a query that found someone.
+    $num_rows = $select->countQuery()->execute()->fetchField();
+  }
+  // Lookup employee status by EID.
+  elseif (!is_null($eid)) {
+    $select = db_select('timeclock_employees', 'e');
+    $select->fields('e', array('eid', 'uid', 'status', 'in_out'));
+    $select->condition('eid', (int) $eid);
+    $select->range(0, 1);
+    // Check to make sure we actually have a query that found someone.
+    $num_rows = $select->countQuery()->execute()->fetchField();
+  }
+  else {
+    $num_rows = 0;
+  }
+  if ($num_rows == 1) {
+    // Execute either query from above.
+    $result = $select->execute()->fetchAll();
+    // Grab the EID, status, and in_out value from either query. This assumes
+    // that if the EID is supplied by the sub-module calling this function
+    // that it this is the value that is supposed to be used, even if the
+    // UID is supplied and is possibly a mismatch. This helps prevent the
+    // possibility of a manager entering time for an employee, but the punch
+    // being recorded for the manager instead. Summary: We always prefer the
+    // EID over any other value.
+    foreach ($result as $record) {
+      $eid = $record->eid;
+      $status = $record->status;
+      $in_out = $record->in_out;
+    }
+    $employee = $eid;
+    $punch_timestamp = time();
+    // Create empty array for validation values later.
+    $return_values = array();
+    // Call hook_timeclock_punch_validate().
+    foreach (module_implements('timeclock_punch_validate') as $module) {
+      $function = $module . '_timeclock_punch_validate';
+      if (function_exists($function)) {
+        // Each hook_timeclock_punch_validate should return an integer. A value
+        // of Zero (0) indicates that the module has validated the data and
+        // it can proceed with the process. Any value greater than zero
+        // refers to a failure value that is supplied by the module
+        // returning a value greater than zero.
+        $return_value = array(
+          $module => $function($array),
+        );
+        // Build an array of arrays from the return values of each sub module.
+        $return_values = array_merge($return_values, $return_value);
+      }
+    }
+    // Check the return value foreach module and if any provide an
+    // failure return it's value.
+    $i = 0;
+    $proceed = TRUE;
+    foreach ($return_values as $module => $value) {
+      // Initialize an empty array for failures.
+      $exception = array();
+      // Any module returning something greater than 0 will cause validation
+      // to fail and the punch to be rejected. All attempted and sucsessful
+      // punches are saved to the database. Rejected punches will be recorded
+      // with the module that rejected them and a failure_code value.
+      if ($value > 0) {
+        $exception[$i]->value = $value;
+        $exception[$i]->module = $module;
+        $proceed = FALSE;
+        $i++;
+      }
+    }
+    if ($status == 0) {
+      $proceed = FALSE;
+      $exception[$i]->value = 3;
+      // Employee terminated/inavtive.
+      $exception[$i]->module = 'timeclock';
+    }
+    //we can only verify info provided by the calling modules, if pin isn't
+    //supplied don't verify pin, assume module verified user's identity before
+    //we got here.
+    if (!is_null($pin) && !timeclock_validate_user_pin($eid, $pin)) {
+      $proceed = FALSE;
+      $exception[$i]->value = 4;
+      // Invalid EID/PIN combo.
+      $exception[$i]->module = 'timeclock';
+    }
+    // No failures found on hook_timeclock_punch_validate().
+    if ($proceed == TRUE) {
+        $return_array['valid'] = TRUE;
+        $return_array['module'] = NULL;
+        $return_array['status'] = 0;
+    }
+    // Module(s) indicate a failure on hook_timeclock_punch_validate().
+    else {
+      // This only returns/logs the FIRST validation failure, it's possible
+      // that more than one may exisit.
+      $return_array['valid'] = FALSE;
+      $return_array['module'] = $exception[0]->module;
+      $return_array['status'] = $exception[0]->value;
+    }
+  }
+  else {
+    // $num_rows is other than 1, we either do not have an employee number for
+    // the UID supplied, or the EID is invalid, or the status of the employee is
+    // 0. Either way, lets return an error here.
+    $return_array['valid'] = FALSE;
+    $return_array['module'] = 'timeclock';
+    $return_array['status'] = 1;
+    // Employee not found.
+  }
+  // Flip status bit. If they are already clocked in then they are attempting,
+  // to clock out, else they are clocking in.
+  if ($in_out == 1) {
+    $new_status = 0;
+  }
+  else {
+    $new_status = 1;
+  }
+  // Send the data to the database
+  $return = timeclock_record_punch($originating_module, $employee, $punch_timestamp, $new_status, $uid, $return_array['status'], $return_array['status']);
+    // True = Database write success.
+  if (!$return) {
+    $return_array['valid'] = FALSE;
+    $return_array['module'] = 'timeclock';
+    $return_array['status'] = 2;
+    // Database Error; punch not saved.
+  }
+  // Return the array containing the status of the punch process to the
+  // function that called it.
+  return $return_array;
+}
+
+/**
+ * Custom function to write puches to database.
+ *
+ * Return value of FALSE or TRUE to indicate sucsess or failure of database
+ * write returned to timeclock_process_punch.
+ */
+function timeclock_record_punch($originating_module, $employee, $punch_timestamp, $in_out, $uid = 0, $exception = 0, $exception_module = NULL) {
+  // Load values to be saved to database.
+  $entry = array(
+    'eid' => $employee,
+    'timestamp' => $punch_timestamp,
+    'in_out' => $in_out,
+    'method' => $originating_module,
+    'uid' => $uid,
+    'failurecode' => $exception,
+    'failuremodule' => $exception_module,
+  );
+  $pid = 0;
+  // Try to write a new record to the database.
+  try {
+    $sucsess = TRUE;
+    drupal_write_record('timeclock_punches', $entry);
+    $pid = $entry ['pid'];
+  }
+  // Catch any exceptions on write.
+  catch (Exception $e) {
+    drupal_set_message(t('Database write failed. Message = %message, query= %query',
+      array('%message' => $e->getMessage(), '%query' => $e->query_string)), 'error');
+    $sucsess = FALSE;
+  }
+  if ($sucsess && $exception == 0) {
+    timeclock_flip_in_out_bit($employee);
+    //add to Edit Table (where values are really stored...)
+    $edit = array(
+      'pid' => $pid,
+      'edit_timestamp' => $punch_timestamp,
+      'uid' => $uid,
+      'memo' => 'Original Value',
+    );
+    if ($pid > 0) {
+      drupal_write_record('timeclock_punches_edits', $edit);
+    }
+  }
+  return $sucsess;
+}
+
+/**
+ * Custom function to detect in/out status of individual employee.
+ */
+function timeclock_read_in_out_bit($eid) {
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('in_out'));
+  $select->condition('eid', $eid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $in_out = $record->in_out;
+  }
+  return $in_out;
+}
+
+function timeclock_read_in_out_bit_by_uid($uid) {
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('in_out'));
+  $select->condition('uid', $uid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $in_out = $record->in_out;
+  }
+  return $in_out;
+}
+
+
+/**
+ * Custom function to change the clocked in or out status for an employee.
+ */
+function timeclock_flip_in_out_bit($eid) {
+  // Employee is not clocked in, flip bit to 1 (clocked in).
+  if (timeclock_read_in_out_bit($eid) == 0) {
+    $query = db_update('timeclock_employees')
+      ->fields(array(
+        'in_out' => 1,
+        ))
+      ->condition('eid', $eid, '=')
+      ->condition('in_out', 0, '=');
+    $query->execute();
+    return 1;
+  }
+  // Employee is clocked in, flip bit to 0 (clocked out).
+  else {
+    $query = db_update('timeclock_employees')
+      ->fields(array(
+        'in_out' => 0,
+        ))
+      ->condition('eid', $eid, '=')
+      ->condition('in_out', 1, '=');
+    $query->execute();
+    return 0;
+  }
+}
+
+/**
+ * Implements hook_timeclock_punch_validate().
+ *
+ * Demonstrates how to use this hook in sub-modules.
+ */
+function timeclock_timeclock_punch_validate() {
+  // Return zero indicates no error since the core module does not perform
+  // any additional validations.
+  return 0;
+  // Return any other posative value to indicate a failure.
+  // Return 1; set value of this in hook_timeclock_messages.
+}
+
+/**
+ * Defines and calls hook_timeclock_messages().
+ *
+ * Checks the requested module for it's status messages and returns them.
+ */
+function timeclock_submodule_status_message($module, $value) {
+  $function = $module . '_timeclock_messages';
+  if (function_exists($function)) {
+    // Each hook_timeclock_punch_validate should return an integer. A value
+    // of Zero (0) indicates that the module has validated the data and it can
+    // proceed with the process. Any value greater than zero refers to a
+    // exception value that is supplied by the module returning a value
+    // greater than zero.
+    $return = $function($value);
+  }
+  else {
+    $return = 'Something went very wrong. No validation failure status message provided.';
+  }
+  return $return;
+}
+
+/**
+ * Implements hook_timeclock_messages().
+ *
+ * Provide text for exceptions used elsewhere. Each sub_module should use
+ * this hook.
+ */
+function timeclock_timeclock_messages($value) {
+  switch ($value) {
+    case 1:
+      $return = 'Employee not found in database.';
+      break;
+
+    case 2:
+      $return = 'A database error occurred. Please try again. If you continue to see this message please report it to your supervisor.';
+      break;
+
+    case 3:
+      $return = 'Employee not allowed to use this system. Contact your supervisor.';
+      break;
+
+    case 4:
+      $return = 'Punch not accepted, Invalid credentials.';
+      break;
+
+    default:
+      $return = 'An unknown error occurred. Please report this message to your supervisor.';
+  }
+  return $return;
+}
+
+function timeclock_user_form($uid) {
+  $userpageload = user_load(arg(1));
+  $uid = $userpageload->uid;
+  $form = array();
+  $eid = timeclock_lookup_eid_from_uid($uid);
+  if (is_null($eid)){
+    $form['timeclock_user_edit_form_eid'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Employee ID'),
+      '#default_value' => timeclock_generate_unique_eid($uid),
+      '#description' => t('Enter the employees ID. A new unique value has been provided, once this value is set it may not be changed.'),
+      '#required' => TRUE,
+      '#size' => '20',
+    );
+  }
+  else {
+    $form['timeclock_user_edit_form_eid'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Employee ID'),
+      '#default_value' => $eid,
+      '#description' => t('The employees ID. This value can not be modified.'),
+      '#size' => '20',
+      '#disabled' => TRUE,
+    );
+  }
+  $form['timeclock_user_edit_form_name'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Name'),
+      '#default_value' => timeclock_lookup_name_from_uid($uid),
+      '#description' => t('Enter the full name of the employee'),
+      '#required' => TRUE,
+      '#size' => '40',
+  );
+  $form['timeclock_user_edit_form_status'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Employee Active'),
+    '#default_value' => (timeclock_lookup_status_from_uid($uid) == 1) ? TRUE : FALSE,
+    '#description' => t('Enter the employees status'),
+  );
+  $form['uid'] = array('#type' => 'hidden', '#value' => $uid);
+  $form['timeclock_user_edit_form_submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Save',
+    '#weight' => 30,
+  );
+  return $form;
+}
+
+/**
+ * Form validate callback for timeclock_user_form.
+ */
+function timeclock_user_form_validate($form, &$form_state) {
+  if (!is_numeric($form_state['values']['timeclock_user_edit_form_eid'])) {
+    form_set_error('timeclock_user_edit_form_eid', t('Employee ID Numbers must be numeric values only.'));
+  }
+  if (timeclock_is_eid_unique($form_state['values']['timeclock_user_edit_form_eid']) > 0) {
+    form_set_error('timeclock_user_edit_form_eid', t('Employee ID @id is already in use for another employee. A new, valid, unique value has been provided.', array('@id' => $form_state['values']['timeclock_user_edit_form_eid'])));
+    $form_state['complete form']['timeclock_user_edit_form_eid']['#value'] = $form['timeclock_user_edit_form_eid']['#default_value'];
+  }
+}
+
+/**
+ * Form submit callback for timeclock_user_form.
+ */
+function timeclock_user_form_submit($form, &$form_state) {
+  $uid = $form_state['values']['uid'];
+  $eid = $form_state['values']['timeclock_user_edit_form_eid'];
+  $status = $form_state['values']['timeclock_user_edit_form_status'];
+  $name = $form_state['values']['timeclock_user_edit_form_name'];
+
+  timeclock_update_user($uid, $eid, $status, $name);
+}
+
+function timeclock_update_user($uid, $eid, $status, $name) {
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('eid', 'uid'));
+  $select->condition('uid', $uid);
+  $num_rows = $select->countQuery()->execute()->fetchField();
+  $entry = array(
+    'uid' => $uid,
+    'eid' => $eid,
+    'status' => $status,
+    'name' => $name,
+  );
+  if ($num_rows == 1) {
+    drupal_write_record('timeclock_employees', $entry, 'eid');
+  }
+  if ($num_rows == 0) {
+    drupal_write_record('timeclock_employees', $entry);
+  }
+}
+
+function timeclock_lookup_eid_from_uid($uid) {
+  $eid = NULL;
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('eid'));
+  $select->condition('uid', $uid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $eid = $record->eid;
+  }
+  return $eid;
+}
+
+function timeclock_lookup_uid_from_eid($eid) {
+  $uid = NULL;
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('uid'));
+  $select->condition('eid', $eid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $uid = $record->uid;
+  }
+  return $uid;
+}
+
+function timeclock_lookup_department_from_eid($eid) {
+  $department = array();
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('department'));
+  $select->condition('eid', $eid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $departments = $record->department;
+  }
+  if (!isset($departments)) {
+    return NULL;
+  }
+  $department = explode(',', $departments);
+  return $department;
+}
+
+function timeclock_lookup_department_from_uid($uid) {
+  $department = array();
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('department'));
+  $select->condition('uid', $uid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $departments = $record->department;
+  }
+  if (!isset($departments)) {
+    return NULL;
+  }
+  $department = explode(',', $departments);
+  return $department;
+}
+
+function timeclock_lookup_name_from_eid($eid) {
+  $name = NULL;
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('name'));
+  $select->condition('eid', $eid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $name = $record->name;
+  }
+  return $name;
+}
+
+function timeclock_lookup_name_from_uid($uid) {
+  $name = NULL;
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('name'));
+  $select->condition('uid', $uid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $name = $record->name;
+  }
+  return $name;
+}
+
+function timeclock_lookup_status_from_uid($uid) {
+  $status = 0;
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('status'));
+  $select->condition('uid', $uid);
+  $select->range(0, 1);
+  $result = $select->execute()->fetchAll();
+  foreach ($result as $record) {
+    $status = $record->status;
+  }
+  return $status;
+}
+
+/**
+ * Implements hook_views_api().
+ *
+ * Requires minimum of Views 2 API. Supplies Views API with the correct
+ * path to the include files.
+ */
+function timeclock_views_api() {
+  return array(
+    'api' => 2,
+    'path' => drupal_get_path('module', 'timeclock') . '/views',
+  );
+}
+
+function timeclock_generate_unique_eid($uid) {
+  //to keep generated eids low we will limit the top value to 100 plus users plus 1.
+  $select = db_select('users', 'u');
+  $select->fields('u', array('uid'));
+  $max_users = $select->countQuery()->execute()->fetchField();
+  $max = 101 + $max_users;
+  //prefer the uid for eid if it is 3 digits or more.
+  if ($uid > 99) {
+    $value = $uid;
+  }
+  else {
+    $value = rand(100, $max);
+  }
+  //check that the generated uid is unique
+  $unique = timeclock_is_eid_unique($value);
+  while ($unique > 0) {
+    $value = rand(100, $max);
+    $unique = timeclock_is_eid_unique($value);
+  }
+  return $value;
+}
+
+function timeclock_is_eid_unique($eid) {
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('eid'));
+  $select->condition('eid', (int) $eid);
+  $num_rows = $select->countQuery()->execute()->fetchField();
+  //return the number of users with that EID, if it is greater than 0 it isn't unique.
+  return $num_rows;
+}
+
+function timeclock_user_eid_set($uid) {
+  // Lookup Employee ID number from UID.
+  $num_rows = 0;
+  if (!is_null($uid)) {
+    $select = db_select('timeclock_employees', 'e');
+    $select->fields('e', array('eid', 'uid', 'status', 'in_out'));
+    $select->condition('uid', $uid);
+    $select->range(0, 1);
+    $num_rows = $select->countQuery()->execute()->fetchField();
+  }
+  if ($num_rows == 1) {
+    return TRUE;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+function timeclock_change_pin_permission($uid) {
+  global $user;
+  if ($user->uid == arg(1) || user_access('change timeclock user pins')) {
+    return TRUE;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+function timeclock_user_pin($uid) {
+  $userpageload = user_load(arg(1));
+  $uid = $userpageload->uid;
+  $form = array();
+  $eid = timeclock_lookup_eid_from_uid($uid);
+  if (!is_null($eid)){
+    $active = array(0 => t('No'), 1 => t('Yes'));
+    $form['change_pin'] = array(
+      '#type' => 'radios',
+      '#title' => t('Change Current Pin'),
+      '#default_value' => 0,
+      '#options' => $active,
+      '#description' => t('Select "Yes" to change the current pin number'),
+    );
+    $form['timeclock_user_pin'] = array(
+      '#type' => 'password',
+      '#title' => t('PIN Number'),
+      '#required' => TRUE,
+      '#size' => '10',
+      '#description' => t('A PIN Number must be at least 3 digits long.'),
+      '#states' => array(
+        'visible' => array(
+          ':input[name=change_pin]' => array('value' => 1),
+        ),
+      ),
+    );
+    $form['eid'] = array('#type' => 'hidden', '#value' => $eid);
+    $form['timeclock_pin_form_submit'] = array(
+      '#type' => 'submit',
+      '#value' => 'Change Pin',
+      '#weight' => 30,
+      '#states' => array(
+        'visible' => array(
+          ':input[name=change_pin]' => array('value' => 1),
+        ),
+      ),
+    );
+  return $form;
+  }
+  else {
+    $page = array(
+      'message' => array(
+        '#type' => 'markup',
+        '#markup' => t('This account has not been setup to use the TimeClock yet. Contact your supervisor.'),
+      ),
+    );
+    return $page;
+  }
+}
+/**
+ * Implements hook_form_validate().
+ *
+ * Checks that submitted values fall with in required values.
+ */
+function timeclock_user_pin_validate($form, &$form_state) {
+  if (drupal_strlen($form_state['values']['timeclock_user_pin']) < 3) {
+    form_set_error('timeclock_user_pin', t('You must provide at least 3 digits for the PIN.'));
+  }
+  if (!is_numeric($form_state['values']['timeclock_user_pin'])) {
+    form_set_error('timeclock_user_pin', t('You may only use numbers in the PIN.'));
+  }
+  $bad_pins = Array(012,0123,01234,123,1234,12345,4321,321,111,1111,222,
+  2222,333,3333,444,4444,555,5555,666,6666,777,7777,888,8888,999,9999,
+  000,0000);
+  if (in_array($form_state['values']['timeclock_user_pin'], $bad_pins)) {
+    form_set_error('timeclock_user_pin', t('You must provide a more secure PIN number.'));
+  }
+  //Provided a check that yes is selected to change PIN in case user has Java disabled
+  //and #states does not change the visiblity of the pin field and submit button.
+  if ($form_state['values']['change_pin'] != 1) {
+    form_set_error('timeclock_user_pin', t('Select "Yes" to change your PIN.'));
+  }
+}
+
+/**
+ * Form submit callback for timeclock_user_pin.
+ *
+ * Modify's the user's pin in the database if passing validation.
+ */
+function timeclock_user_pin_submit($form, &$form_state) {
+  $pin = $form_state['values']['timeclock_user_pin'];
+  $eid = $form_state['values']['eid'];
+  $query = db_update('timeclock_employees')
+    ->fields(array(
+      'pin' => $pin,
+    ))
+     ->condition('eid', $eid, '=');
+     $caught_error = FALSE;
+  try {
+    $query->execute();
+  }
+  catch (Exception $e) {
+      drupal_set_message(t('Database write failed. Message = %message, query= %query',
+      array('%message' => $e->getMessage(), '%query' => $e->query_string)), 'error');
+    $caught_error = TRUE;
+  }
+  // Display a nice message on succses or failure.
+  if (!$caught_error) {
+    drupal_set_message(t('Your PIN has been changed.'));
+  }
+  else {
+    drupal_set_message(t('PIN Not Changed!'), 'error');
+  }
+}
+
+function timeclock_validate_user_pin($eid, $pin) {
+  $valid = FALSE;
+  $select = db_select('timeclock_employees', 'e');
+  $select->fields('e', array('eid', 'pin'));
+  $select->condition('eid', $eid);
+  $select->condition('pin', $pin);
+  $select->range(0, 1);
+  // Check to make sure we actually have a query that found someone.
+  $num_rows = $select->countQuery()->execute()->fetchField();
+  $valid = ($num_rows > 0) ? TRUE : FALSE;
+  return $valid;
+}

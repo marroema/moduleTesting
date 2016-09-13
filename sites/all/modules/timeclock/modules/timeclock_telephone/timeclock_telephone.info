@@ -1,0 +1,13 @@
+name = TimeClock Telephone
+description = "Timeclock Telephone module provides punch in and out functionality to the TimeClock module."
+core = 7.x
+package = TimeClock
+dependencies[] = timeclock
+dependencies[] = entity
+
+; Information added by Drupal.org packaging script on 2015-08-26
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "timeclock"
+datestamp = "1440599340"
+

@@ -1,0 +1,17 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions for timeclock_payroll.
+ */
+
+/**
+ * Implements hook_install().
+ *
+ * Set default values for variables used elsewhere.
+ */
+function timeclock_payroll_install() {
+  // Set default payperiod length to 2 weeks (14 days).
+  variable_set('timeclock_payroll_payperiod_length', 2);
+  // Set default payperiod start day to Sunday.
+  variable_set('timeclock_payroll_payperiod_start', 1);
+}

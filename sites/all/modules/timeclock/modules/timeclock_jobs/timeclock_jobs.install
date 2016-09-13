@@ -1,0 +1,49 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions for timeclock_jobs.
+ */
+
+/**
+ * Implements hook_install().
+ *
+ * Set default values for variables used elsewhere.
+ */
+function timeclock_jobs_install() {
+  // Don't do a thing yet.
+}
+
+/**
+ * Implements hook_schema().
+ */
+function timeclock_jobs_schema() {
+  $schema['timeclock_jobs'] = array(
+    'description' => 'table for timeclock_jobs Entity',
+    'fields' => array(
+      'job_id' => array(
+        'description' => 'Primary Key job_id',
+        'type' => 'serial',
+        'not null' => TRUE,
+      ),
+      'name' => array(
+        'description' => 'job name',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'created' => array(
+        'description' => 'Created timestamp',
+        'type' => 'int',
+        'not null' => FALSE,
+      ),
+      'changed' => array(
+        'description' => 'Changed timestamp',
+        'type' => 'int',
+        'not null' => FALSE,
+      ),
+    ),
+    'primary key' => array('job_id'),
+  );
+  return $schema;
+}

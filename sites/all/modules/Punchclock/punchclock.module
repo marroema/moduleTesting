@@ -1,0 +1,372 @@
+<?php
+/**
+ * @file
+ * Code for the Punchclock feature.
+ */
+
+
+include_once('punchclock.features.inc');
+include_once('punchclock.admin.inc');
+
+/**
+ * Implementation of hook_perm()
+*/
+function punchclock_permission() {
+	return array(
+			'punchclock punch' => array(
+					'title' => t('Punchclock Punch In'),
+					'description' => t('Can punch in and out'),
+			),
+			'view punches' => array(
+					'title' => t('View Punches'),
+					'description' => t('Can view users\' punch ins and outs'),
+			),
+			'administer punchclock' => array(
+					'title' => t('Administer Punchclock'),
+					'description' => t('Administer Punchclock'),
+			),
+	);
+}
+
+/**
+ * Implementation of hook_menu()
+ */
+function punchclock_menu() {
+	$items = array();
+
+	$items['punchclock/punch'] = array(
+			'title' => 'Punch In',
+			'page callback' => 'punchclock_punch_ajax_callback',
+			'access arguments' => array('punchclock punch'),
+			'type' => MENU_CALLBACK,
+			'delivery callback' => 'punchclock_ajax_deliver_callback',
+	);
+	
+	$items['admin/config/system/punchclock'] = array(
+			'title' => 'Punchclock settings',
+			'description' => 'Punchclock can check an email address',
+			'page callback' => 'drupal_get_form',
+			'page arguments' => array('punchclock_admin_form'),
+			'access arguments' => array('administer punchclock'),
+			'type' => MENU_NORMAL_ITEM,
+	);
+
+	return $items;
+}
+
+/**
+ * Custom delvery callback
+ */
+function punchclock_ajax_deliver_callback($page_callback_result) {
+	print $page_callback_result;
+	ajax_footer();
+}
+
+/**
+ * Implementation of hook_page_build()
+ */
+function punchclock_page_build(&$page) {
+	global $user;
+}
+
+
+/**
+ * Custom Functions
+ */
+
+/**
+ * Implementation of hook_block_info()
+ */
+function punchclock_block_info() {
+	$blocks['punchclock'] = array(
+			'info' => 'Punch Block',
+	);
+	return $blocks;
+}
+
+function punchclock_block_view($delta = 0) {
+	$block = array();
+	global $user;
+	if (user_access('punchclock punch')) {
+		$block['subject'] = ('Punch Clock');
+		$block['content'] = drupal_get_form('punchclock_punch_form');
+	}
+	return $block;
+}
+
+/**
+ * Custom punch form
+ */
+function punchclock_punch_form($form, &$form_state) {
+	global $user;
+	$account = $user;
+
+	if (isset($form_state['build_info']['args']['uid'])) {
+		$account = user_load($form_state['build_info']['args']['uid']);
+	} else {
+		$account = user_load($user->uid);
+	}
+
+	$form['errors'] = array('#markup' => '<div id="punchclock-error"></div>');
+
+	$form['#attached'] = array(
+			'js' => array(drupal_get_path('module', 'punchclock') . '/js/punchclock.js'),
+	);
+
+	$form['#action'] = url($_GET['q'], array('query' => drupal_get_destination()));
+
+	$form['#id'] = 'punchclock-punch-form';
+
+	$punched_in = false;
+	if(!empty($account->field_punch_status[LANGUAGE_NONE][0]) && $account->field_punch_status[LANGUAGE_NONE][0]['value'] == 1 ) {
+		$punched_in = true;
+	}
+	if (!$punched_in) {
+		if ($vocabulary = taxonomy_vocabulary_machine_name_load('punchclock_activities')) {
+			$options = array();
+			if ($terms = taxonomy_get_tree($vocabulary->vid)) {
+				foreach ($terms as $term) {
+					$options[$term->tid] = str_repeat('-', $term->depth) . $term->name;
+				}
+			}
+			$form['activity'] = array(
+					'#type' => 'select',
+					'#title'=> t('Activity'),
+					'#options' => $options,
+					'#required' => true,
+					'#default_value' => !empty($account->field_punch_activity[LANGUAGE_NONE][0])?$account->field_punch_activity[LANGUAGE_NONE][0]['tid']:0,
+			);
+		}
+	} else {
+		$form['activity'] = array(
+				'#type' => 'textarea',
+				'#title' => t('What did you do?'),
+				'#required' => true,
+				'#size' => 25,
+				'#rows' => 4,
+		);
+	}
+	$form['actions']['submit'] = array(
+			'#type' => 'submit',
+			'#value' => (($punched_in)?t('Punch Out'):t("Punch In")),
+			//'#attributes' => array('class' => array('positiveActionButton')),
+			'#ajax' => array(
+					'path' => 'punchclock/punch',
+			),
+			'#suffix' => '<div class="punchlinks">' . "<div class='form-row'>" . l("Edit Tasks",'user/'.$account->uid.'/edit', array('attributes' =>array("class" => array("neutralActionButton")))) . "</div><div class='form-row'>" .  l("View Punch Log",'punchclock/punchlog', array('attributes' =>array("class" => array("neutralActionButton")))) . '</div></div>',
+	);
+
+	return $form;
+}
+
+function punchclock_punch_form_validate($form, &$form_state) {
+	//TODO should we do some validation here?
+}
+
+function punchclock_punch_form_submit($form, &$form_state, $punch = NULL) {
+	global $user;
+	$account = $user;
+	if (isset($form_state['build_info']['args']['uid'])) {
+		$account = user_load($form_state['build_info']['args']['uid']);
+	} else {
+		$account = user_load($user->uid);
+	}
+
+	date_default_timezone_set("America/New_York");
+	if ($form_state['buttons'][0]['#value']== "Punch In" && $punch != "OUT") { 
+
+		$edit = array(
+				'field_punch_status' => array(
+						LANGUAGE_NONE => array(
+								0 => array(
+										'value' => 1,
+								),
+						),
+				),
+				'field_punch_activity' => array(
+						LANGUAGE_NONE => array(
+								0 => array(
+										'tid' => $form_state['values']['activity'],
+								),
+						),
+				),
+				'field_punch_start' => array(LANGUAGE_NONE => array(0 => array(
+						'value' => date('Y-m-d H:i:s', time()-date("Z",time())),
+						'timezone' => 'UTC',
+						'date_type' => 'datetime',
+				),),),
+	);
+		user_save($account,$edit);
+	} else if ($punch != "IN") {
+		
+		$new_node = new stdClass();
+		$new_node->title = substr($form_state['values']['activity'],0,35 );
+		$new_node->type = 'shift';
+		$new_node->uid = $account->uid;
+		$new_node->language = "und";
+		$new_node->field_punchlog_entry = array(LANGUAGE_NONE => array(0 => array(
+				'value' => $form_state['values']['activity'],
+		),),);
+		$new_node->field_punch_activity = array(LANGUAGE_NONE => array(0 => array(
+				'tid' => $account->field_punch_activity[LANGUAGE_NONE][0]['tid'],
+		),),);
+
+		$new_node->field_punch_start = $account->field_punch_start;
+
+		$new_node->field_punch_end = array(LANGUAGE_NONE => array(0 => array(
+				'value' => date('Y-m-d H:i:s', time()-date("Z",time())),
+				'timezone' => 'America/New_York',
+				'date_type' => 'datetime',
+		),),);
+
+		node_save($new_node);
+		//Save a second time so the computed field can take
+		node_save($new_node);
+
+		$edit = array(
+				'field_punch_status' => array(
+						LANGUAGE_NONE => array(
+								0 => array(
+										'value' => 0,
+								),
+						),
+				),
+				'field_punch_start' => array(LANGUAGE_NONE => array(0 => array(
+						'value' => date('Y-m-d H:i:s', 0),
+						'timezone' => 'UTC',
+						'date_type' => 'datetime',
+				),
+				),
+				),
+		);
+		user_save($account,$edit);
+	}
+}
+
+/**
+ * Ajax login form process
+ */
+function punchclock_punch_ajax_callback() {
+	list($form, $form_state) = ajax_get_form();
+	drupal_process_form($form['#form_id'], $form, $form_state);
+	$commands = array();
+	if (!form_get_errors()) {
+		$commands[] = ajax_command_html('#punchclock-error', t('Punch successful. Page is refreshing...'));
+		$settings_data = array('punchclock_reload' => TRUE);
+		array_unshift($commands, ajax_command_settings($settings_data, FALSE));
+	}
+	else {
+		$commands[] = ajax_command_html('#punchclock-error', theme('status_messages'));
+	}
+	return drupal_json_encode($commands);
+}
+
+function punchclock_cron() {
+  $imap_connection_string = variable_get('punchclock_imap_connection_string', '{imap.gmail.com:993/imap/ssl}INBOX');
+  $username = variable_get('punchclock_imap_username', ''); 
+  $password = variable_get('punchclock_imap_password', '');
+	$inbox = imap_open($imap_connection_string, $username, $password);
+	if ($inbox) {
+		$emails = imap_search($inbox,'UNSEEN');
+
+		if($emails) {
+			rsort($emails);    //newest emails first
+			foreach($emails as $email) {
+				$overview = imap_fetch_overview($inbox, $email, 0);
+				$body = imap_fetchbody($inbox, $email,0);
+				$from = $overview[0]->from;
+				$to = $overview[0]->to;
+				$subject = $overview[0]->subject;
+				$date = $overview[0]->date;
+				punchclock_process_message($from, $to, $subject, $body, $date);
+			}
+		}
+	}
+}
+
+function punchclock_process_message($from = '', $to = '',  $subject = '', $body = '') {
+  $valid_subjects = array("IN", "OUT");
+
+  $approved_domains = variable_get('punchclock_approved_domains', '');
+
+  $email = '';
+  preg_match('/(?<=<).*?(?=>)/', $from, $email);
+  if (!empty($email[0])) {
+  	$from = $email[0];
+  }
+
+	$account = user_load_by_mail($from);
+	if (!$account->uid) {
+		drupal_mail('punchclock', 'clock_error', $from, language_default(),
+		array(  'account' => $account,
+		'message' => 'An account was not found with this email.',
+		));
+	}
+	if(user_access('punchclock punch', $account)) {
+		$subject = strtoupper($subject);
+		if(in_array($subject, $valid_subjects)) {
+			
+			
+			$form_state = array();
+			$form_state['build_info'] = array(
+				'args' => array(
+					'uid' => $account->uid,
+				),
+			);
+			
+			
+			if($subject == "IN") {
+				//$form_state['buttons'][0]['#value'] = "Punch In";
+				//We use the previously known tid when logging in via email
+				$form_state['values'] = array(
+						'activity' => $account->field_punch_activity[LANGUAGE_NONE][0]['tid'],
+				);
+				$form = drupal_form_submit('punchclock_punch_form', $form_state, "IN");
+        drupal_mail('punchclock', 'clock_in', $account->mail, user_preferred_language($account),array('account' => $account));
+			}
+			else if ($subject == "OUT") {
+				if(strlen($body) < 10) {
+					drupal_mail('punchclock', 'clock_error', $account->mail, user_preferred_language($account),
+					array('account' => $account,
+					'message' => 'You have not been logged out.  You tried to log out without a message.',
+					));
+				} else {
+					//$form_state['buttons'][0]['#value'] = "Punch Out";
+					$form_state['values'] = array(
+							'activity' => $body,
+					);
+					$form = drupal_form_submit('punchclock_punch_form', $form_state, "OUT");
+					drupal_mail('punchclock', 'clock_out', $account->mail, user_preferred_language($account),array('account' => $account));
+				}
+			}
+		}
+	} else {
+		drupal_mail('punchclock', 'clock_error', $account->mail, user_preferred_language($account),
+		array(  'account' => $account,
+		'message' => 'Your account does not have the permissions required to punch in/out.',
+		));
+	}
+}
+
+function punchclock_mail($key, &$message, $params) {
+	$data['user'] = $params['account'];
+	$options['language'] = $message['language'];
+	user_mail_tokens($variables, $data, $options);
+	switch($key) {
+		case 'clock_error':
+			$langcode = $message['language']->language;
+			$message['subject'] = t('Punchclock ERROR notification', $variables, array('langcode' => $langcode));
+			$message['body'][] = $params['message'];
+			break;
+		case 'clock_in':
+			$langcode = $message['language']->language;
+			$message['subject'] = t('Punched IN confirmation', $variables, array('langcode' => $langcode));
+			$message['body'][] = t("!username,\n\nYou have been logged in.", $variables, array('langcode' => $langcode));
+			break;
+		case 'clock_out':
+			$langcode = $message['language']->language;
+			$message['subject'] = t('Punched OUT confirmation', $variables, array('langcode' => $langcode));
+			$message['body'][] = t("!username,\n\nYou have been logged out.", $variables, array('langcode' => $langcode));
+			break;
+	}
+}

@@ -1,0 +1,16 @@
+name = TimeClock Payroll
+description = Sub-Module of TimeClock API. Provides payroll processing functions.
+package = TimeClock
+core = 7.x
+dependencies[] = timeclock
+dependencies[] = date
+dependencies[] = date_api
+dependencies[] = date_popup
+configure = admin/config/system/timeclock
+
+; Information added by Drupal.org packaging script on 2015-08-26
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "timeclock"
+datestamp = "1440599340"
+

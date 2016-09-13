@@ -1,0 +1,13 @@
+name = TimeClock Web
+description = Sub-Module of TimeClock API. Provides TimeClock Functionality from a web based interace.
+package = TimeClock
+core = 7.x
+dependencies[] = timeclock
+configure = admin/config/system/timeclock/web
+
+; Information added by Drupal.org packaging script on 2015-08-26
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "timeclock"
+datestamp = "1440599340"
+

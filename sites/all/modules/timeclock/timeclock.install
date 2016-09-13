@@ -1,0 +1,224 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for timeclock.
+ */
+
+/**
+ * Implements hook_install().
+ *
+ * Set default values for variables used elsewhere.
+ * Creates default timeclock taxonomy vocab
+ */
+function timeclock_install() {
+  variable_set('timeclock_enabled', 0);
+  $vocabulary = new stdClass();
+  $vocabulary->name = 'TimeClock Departments';
+  $vocabulary->machine_name = 'timeclock_departments';
+  taxonomy_vocabulary_save($vocabulary);
+  $vid = $vocabulary->vid;
+  $term = new stdClass();
+  $term->name = 'Company Wide';
+  $term->description = 'Default Term';
+  $term->vid = $vid;
+  taxonomy_term_save($term);
+  variable_set('timeclock_departments_vid', $vid);
+  drupal_set_message('Department Taxonomy Vocabulary Created. Default Department Created');
+
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function timeclock_requirements($phase) {
+  $t = get_t();
+  if ($phase == 'runtime' && variable_get('timeclock_enabled') == 1) {
+    $requirements = array();
+    $requirements['timeclock']['title'] = $t('TimeClock Modules');
+    $requirements['timeclock']['value'] = $t('TimeClock enabled');
+    $requirements['timeclock']['description'] = $t('The timeclock system is enabled, any users with appropriate permission will be able clock in/out');
+    $requirements['timeclock']['severity'] = REQUIREMENT_INFO;
+    return $requirements;
+  }
+}
+/**
+ * Implements hook_schema().
+ */
+function timeclock_schema() {
+  $schema['timeclock_employees'] = array(
+    'description' => 'Reference table for Drupal UIDs to external Employee ID numbers.',
+    'fields' => array(
+      'eid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'Employee ID',
+      ),
+      'payroll_id' => array(
+        'type' => 'varchar',
+        'size' => 'normal',
+        'length' => 255,
+        'description' => 'External Payroll System ID',
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'description' => 'Drupal user ID',
+      ),
+      'name' => array(
+        'type' => 'varchar',
+        'size' => 'normal',
+        'length' => 255,
+        'not null' => TRUE,
+        'description' => 'legal name of the employee.',
+      ),
+      'department' => array(
+        'type' => 'varchar',
+        'size' => 'normal',
+        'length' => 255,
+        'description' => 'Comma seperated department values, references department entity.',
+      ),
+      'status' => array(
+        'type' => 'int',
+        'size' => 'tiny',
+        'description' => 'Employment status 1 is active, 0 is terminated.',
+      ),
+      'in_out' => array(
+        'type' => 'int',
+        'size' => 'tiny',
+        'default' => 0,
+        'description' => 'Employee status 1 is clocked in, 0 in clocked out.',
+      ),
+      'pin' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'description' => 'Employee Pin number',
+      ),
+    ),
+    'foreign keys' => array(
+      'timeclock_users' => array(
+        'table' => 'users',
+        'columns' => array('uid' => 'uid'),
+      ),
+    ),
+    'primary key' => array('eid'),
+  );
+  $schema['timeclock_punches'] = array(
+    'description' => 'Stores timeclock punches from sub-modules.',
+    'fields' => array(
+      'pid' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique timeclock punch ID.',
+      ),
+      'eid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'Employee ID',
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'description' => 'Drupal user ID',
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'Timestamp punch was processed by system.',
+      ),
+      'method' => array(
+        'type' => 'varchar',
+        'size' => 'normal',
+        'length' => 255,
+        'not null' => TRUE,
+        'description' => 'Name of the module that submitted the punch data.',
+      ),
+      'failure_code' => array(
+        'type' => 'int',
+        'size' => 'tiny',
+        'default' => 0,
+        'description' => 'Status of punch. 0 indicates recorded normally.',
+      ),
+      'failure_module' => array(
+        'type' => 'varchar',
+        'size' => 'normal',
+        'length' => 255,
+        'description' => 'The name of the module that returned FALSE during validation.',
+      ),
+    ),
+    'foreign keys' => array(
+      'timeclock_employees' => array(
+        'table' => 'timeclock_employees',
+        'columns' => array('eid' => 'eid'),
+      ),
+    ),
+    'primary key' => array('pid'),
+  );
+  $schema['timeclock_punches_edits'] = array(
+    'description' => 'Stores edits made to timeclock punches.',
+    'fields' => array(
+      'edit_id' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique timeclock punch edit ID.',
+      ),
+      'pid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'Original punch ID number',
+      ),
+      'in_timestamp' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'punch in time',
+      ),
+      'out_timestamp' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'punch out time',
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'not null' => TRUE,
+        'description' => 'User ID of person making the edit.',
+      ),
+      'memo' => array(
+        'type' => 'text',
+        'size' => 'big',
+        'not null' => TRUE,
+        'description' => 'User entered reason for modifying the punch.',
+      ),
+      'edit_timestamp' => array(
+          'type' => 'int',
+          'size' => 'normal',
+          'not null' => TRUE,
+          'description' => 'when the punch was entered/modified.',
+      ),
+    ),
+    'foreign keys' => array(
+      'timeclock_employees' => array(
+        'table' => 'users',
+        'columns' => array('eid' => 'eid'),
+      ),
+    ),
+    'primary key' => array('edit_id'),
+  );
+  return $schema;
+}
+/**
+ * Implements hook_uninstall().
+ *
+ * Get rid of all the variables on uninstall.
+ */
+function timeclock_uninstall() {
+  variable_del('timeclock_enabled');
+  taxonomy_vocabulary_delete(variable_get('timeclock_departments_vid'));
+  variable_del('timeclock_departments_vid');
+}

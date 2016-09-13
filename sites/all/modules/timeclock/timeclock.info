@@ -1,0 +1,17 @@
+name = TimeClock
+description = Provides TimeClock Functionality. This module must be paired with additional sub-modules, for the actual data collection. Employees are Drupal users, timeclock punches are relating to the user.
+package = TimeClock
+core = 7.x
+dependencies[] = entity
+configure = admin/config/system/timeclock
+files[] = views/timeclock.views.inc
+files[] = timeclock.admin.inc
+files[] = timeclock.install
+files[] = timeclock.module
+
+; Information added by Drupal.org packaging script on 2015-08-26
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "timeclock"
+datestamp = "1440599340"
+
